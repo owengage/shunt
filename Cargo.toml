@@ -1,9 +1,12 @@
 [package]
 name = "shunt"
+description = "Run multiple commands in single terminal with docker compose like logs."
+repository = "https://github.com/owengage/shunt"
+readme = "README.md"
 version = "0.1.0"
+authors = ["Owen Gage <owengage@gmail.com>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.69"
