@@ -47,6 +47,7 @@ out to a shell:
 
 # TODO
 
+- [ ] Set cwd for command.
 - [ ] Add global option for colored prefixes (this wouldn't stop color from
       children).
 - [ ] argv splitting option, eg just provide "echo hello".

@@ -7,7 +7,7 @@ use std::{
         fd::{AsRawFd, FromRawFd},
         unix::process::CommandExt,
     },
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
 
@@ -37,6 +37,7 @@ enum AutoBool {
 #[derive(Debug, Clone)]
 struct CommandConfig {
     argv: Vec<String>,
+    workdir: PathBuf,
     tty: AutoBool,
 }
 
@@ -58,19 +59,31 @@ impl<'de> Deserialize<'de> for CommandConfig {
             Full {
                 argv: Vec<String>,
                 tty: Option<AutoBool>,
+                workdir: Option<PathBuf>,
             },
         }
 
         let inner = CommandConf::deserialize(deserializer)?;
 
+        let cwd = match std::env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(_) => {
+                return Err(serde::de::Error::custom(
+                    "could not access current working directory",
+                ))
+            }
+        };
+
         Ok(match inner {
             CommandConf::Split(argv) => CommandConfig {
                 argv,
                 tty: AutoBool::Auto,
+                workdir: cwd,
             },
-            CommandConf::Full { argv, tty } => CommandConfig {
+            CommandConf::Full { argv, tty, workdir } => CommandConfig {
                 argv,
                 tty: tty.unwrap_or(AutoBool::Auto),
+                workdir: cwd.join(workdir.unwrap_or_else(|| PathBuf::from("."))),
             },
         })
     }
@@ -219,6 +232,7 @@ fn start_command(name: &str, cmd_config: &CommandConfig) -> anyhow::Result<Handl
     .stdout(stdout)
     .stderr(stderr)
     .stdin(Stdio::null())
+    .current_dir(&cmd_config.workdir)
     .spawn()
     .context(format!("command \"{}\" failed to spawn", name))?;
 
