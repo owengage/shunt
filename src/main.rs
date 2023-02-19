@@ -27,7 +27,8 @@ struct Config {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
-enum TtyOpt {
+#[serde(rename_all = "kebab-case")]
+enum AutoBool {
     Auto,
     Always,
     Never,
@@ -36,7 +37,7 @@ enum TtyOpt {
 #[derive(Debug, Clone)]
 struct CommandConfig {
     argv: Vec<String>,
-    tty: TtyOpt,
+    tty: AutoBool,
 }
 
 #[derive(Debug, Clone)]
@@ -52,16 +53,24 @@ impl<'de> Deserialize<'de> for CommandConfig {
     {
         #[derive(Debug, Deserialize)]
         #[serde(untagged)]
-        enum Inner {
+        enum CommandConf {
             Split(Vec<String>),
+            Full {
+                argv: Vec<String>,
+                tty: Option<AutoBool>,
+            },
         }
 
-        let inner = Inner::deserialize(deserializer)?;
+        let inner = CommandConf::deserialize(deserializer)?;
 
         Ok(match inner {
-            Inner::Split(argv) => CommandConfig {
+            CommandConf::Split(argv) => CommandConfig {
                 argv,
-                tty: TtyOpt::Auto,
+                tty: AutoBool::Auto,
+            },
+            CommandConf::Full { argv, tty } => CommandConfig {
+                argv,
+                tty: tty.unwrap_or(AutoBool::Auto),
             },
         })
     }
@@ -90,6 +99,9 @@ fn handle_stdout(h: &mut Handle, info: &CommandInfo, out: impl Read) {
 }
 
 fn go(config: Config) -> anyhow::Result<()> {
+    let mut signals = Signals::new([SIGTERM, SIGINT])?;
+    let handle = signals.handle();
+
     let mut handles = config
         .commands
         .iter()
@@ -98,20 +110,13 @@ fn go(config: Config) -> anyhow::Result<()> {
 
     let ids: Vec<_> = handles.iter().flatten().map(|h| h.child.id()).collect();
 
-    // TODO: Proper signal handling:
-    // https://docs.rs/signal-hook/latest/signal_hook/iterator/struct.SignalsInfo.html
-    let mut signals = Signals::new([SIGTERM, SIGINT])?;
-    let handle = signals.handle();
-
     std::thread::spawn(move || {
         // We set the parent process of each child to itself to give each it's
         // own process group. This means ^C to gather isn't automatically sent
         // to all child processes. We manually forward to signal to each child.
         //
-        // Without the isolated process groups, we'd double-SIGINT each child
-        // process, potentially causing issues. If we instead kept the parent
-        // being gather, then a direct signal to gather (`pkill gather`) would
-        // not signal child processes and would basically do nothing.
+        // Without the isolating process groups, we'd double-SIGINT each child
+        // process on ^C, potentially causing issues.
         for signal in &mut signals {
             for id in &ids {
                 unsafe { nix::libc::kill(*id as i32, signal) };
@@ -184,9 +189,9 @@ fn start_command(name: &str, cmd_config: &CommandConfig) -> anyhow::Result<Handl
     let is_tty = nix::unistd::isatty(our_stdout).unwrap();
 
     let wrap_tty = match cmd_config.tty {
-        TtyOpt::Auto => is_tty,
-        TtyOpt::Always => true,
-        TtyOpt::Never => false,
+        AutoBool::Auto => is_tty,
+        AutoBool::Always => true,
+        AutoBool::Never => false,
     };
 
     let mut tty_master = None;
