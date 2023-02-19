@@ -125,7 +125,7 @@ fn go(config: Config) -> anyhow::Result<()> {
 
     std::thread::spawn(move || {
         // We set the parent process of each child to itself to give each it's
-        // own process group. This means ^C to gather isn't automatically sent
+        // own process group. This means ^C to shunt isn't automatically sent
         // to all child processes. We manually forward to signal to each child.
         //
         // Without the isolating process groups, we'd double-SIGINT each child
@@ -280,13 +280,26 @@ fn main() -> anyhow::Result<()> {
 
     let config_path = args.next().context("unable to read argv")?;
     let config_path = Path::new(&config_path);
-    let config = std::fs::File::open(config_path)
+
+    let config_path = config_path
+        .canonicalize()
+        .context("directory of config not canonicalizable")?;
+
+    let config_dir = config_path
+        .parent()
+        .context("config file had no parent directory")?
+        .to_owned();
+
+    let config = std::fs::File::open(&config_path)
         .and_then(|mut f| {
             let mut s = String::new();
             f.read_to_string(&mut s)?;
             Ok(s)
         })
-        .context(format!("could not open config: {:?}", config_path))?;
+        .context(format!("could not open config: {:?}", &config_path))?;
+
+    // Everything should happen relative to the config dir.
+    std::env::set_current_dir(config_dir).unwrap();
 
     let config: Config = match config_path.extension().and_then(|s| s.to_str()) {
         Some("json" | "json5") => {
