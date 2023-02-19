@@ -1,4 +1,4 @@
-# Gather
+# Shunt
 
 Have you ever wanted to run multiple commands in the same terminal, and have
 Docker Compose style logs come out? Then this is the tool for you.
