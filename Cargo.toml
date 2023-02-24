@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1.0.69"
+clap = { version = "4.1.6", features = ["derive"] }
 json5 = "0.4.1"
 nix = { version = "0.26.2", features = ["term"] }
 serde = { version = "1.0.152", features = ["derive"] }

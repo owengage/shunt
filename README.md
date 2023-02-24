@@ -67,7 +67,7 @@ out to a shell:
 
 # TODO
 
-- [ ] Set cwd for command.
+- [ ] Properly lock stdout in order to remove any chance of tearing.
 - [ ] Add global option for colored prefixes (this wouldn't stop color from
       children).
 - [ ] argv splitting option, eg just provide "echo hello".

@@ -1,20 +1,28 @@
-mod config;
+mod guts;
 mod shunt;
 
-use config::Config;
-use shunt::go;
-use std::{io::Read, path::Path};
+use clap::Parser;
+use guts::go;
+use shunt::Shunt;
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 
-fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    if args.len() != 1 {
-        anyhow::bail!("expected path to single configuration file")
-    }
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    shunt_file: PathBuf,
+    /// Exclude the named commands, can be specified multiple times.
+    #[arg(short = 'e', long)]
+    exclude: Vec<String>,
+}
 
-    let config_path = args.next().context("unable to read argv")?;
-    let config_path = Path::new(&config_path);
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    let config_path = Path::new(&args.shunt_file);
 
     let config_path = config_path
         .canonicalize()
@@ -36,13 +44,18 @@ fn main() -> anyhow::Result<()> {
     // Everything should happen relative to the config dir.
     std::env::set_current_dir(config_dir).unwrap();
 
-    let config: Config = match config_path.extension().and_then(|s| s.to_str()) {
+    let mut config: Shunt = match config_path.extension().and_then(|s| s.to_str()) {
         Some("json" | "json5") => {
             json5::from_str(&config).context("could not parse JSON config file")
         }
         Some(ext) => anyhow::bail!("unknown file extension for config file: {ext}"),
         None => anyhow::bail!("could not recognise extension for config file"),
     }?;
+
+    // Remove commands that have been excluded.
+    config
+        .commands
+        .retain(|name, _| !args.exclude.contains(name));
 
     go(config)
 }
