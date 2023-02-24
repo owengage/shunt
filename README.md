@@ -15,7 +15,7 @@ Configure the commands you want in a JSON (actually JSON5) file:
 }
 ```
 
-Run `gather dev.json` and see your output neatly woven together similar to
+Run `shunt dev.json` and see your output neatly woven together similar to
 Docker Compose.
 
 ## Workdir
@@ -36,7 +36,7 @@ are relative _to the JSON config_.
 
 ## Pseudo-TTY
 
-Each command is run in a pseudo-TTY if `gather` itself is run in a pseudo-TTY.
+Each command is run in a pseudo-TTY if `shunt` itself is run in a pseudo-TTY.
 You can disable this with the `tty` option on a command:
 
 ```json

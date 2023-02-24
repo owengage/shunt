@@ -2,13 +2,15 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     fs::File,
     hash::{Hash, Hasher},
-    io::{BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read},
     os::{
         fd::{AsRawFd, FromRawFd},
         unix::process::CommandExt,
     },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
+    thread::spawn,
 };
 
 use std::io::Write;
@@ -89,26 +91,60 @@ impl<'de> Deserialize<'de> for CommandConfig {
     }
 }
 
-fn handle_stdout(h: &mut Handle, info: &CommandInfo, out: impl Read) {
-    let cmd_stdout = BufReader::new(out);
+fn handle_stdout(info: &CommandInfo, out: IoArc<File>) {
     let mut stdout = StandardStream::stdout(ColorChoice::Auto);
+    // let mut buf = vec![0; 4 * 1024];
+    // let mut end = 0;
+    // let mut first = true;
 
-    for line in cmd_stdout.lines().flatten() {
-        prefix_write(&mut stdout, info, &line);
-    }
+    let br = BufReader::new(out);
 
-    match h.child.wait() {
-        Ok(status) => {
-            let mut stdout = stdout.lock();
-
-            colored_write(
-                &mut stdout,
-                &info.color,
-                &format!("\"{}\" {}.\n", info.name, status),
-            );
+    for line in br.lines() {
+        match line {
+            Ok(line) => prefix_write(&mut stdout, info, &line),
+            Err(e) => {
+                println!("{}", e);
+                break;
+            }
         }
-        Err(e) => println!("{} failed to be waited on: {}", info.name, e),
     }
+
+    // let flush = |buf: Vec<u8>| {};
+    // loop {
+    //     let n = out.lock().unwrap().read(&mut buf[end..]);
+    //     // println!("Read {:?}", n);
+    //     match n {
+    //         Ok(0) => {
+    //             flush(buf);
+    //             return;
+    //         }
+    //         Err(e) => {
+    //             flush(buf);
+    //             return;
+    //         }
+    //         Ok(n) => end += n,
+    //     }
+
+    //     let mut stream = stdout.lock();
+
+    //     if first {
+    //         colored_write(&mut stream, &info.color, &format!("[{}] ", &info.name));
+    //         first = false;
+    //     }
+
+    //     for b in &buf[..end] {
+    //         write!(stream, "{}", *b as char).unwrap();
+
+    //         if *b == b'\n' {
+    //             colored_write(&mut stream, &info.color, &format!("[{}] ", &info.name));
+    //         }
+    //     }
+
+    //     drop(stream);
+    //     buf.clear();
+    //     buf.resize(4 * 1024, 0);
+    //     end = 0;
+    // }
 }
 
 fn go(config: Config) -> anyhow::Result<()> {
@@ -121,19 +157,11 @@ fn go(config: Config) -> anyhow::Result<()> {
         .map(|(name, info)| start_command(name, info))
         .collect::<Vec<_>>();
 
-    let ids: Vec<_> = handles.iter().flatten().map(|h| h.child.id()).collect();
+    // let ids: Vec<_> = handles.iter().flatten().map(|h| h.child.id()).collect();
 
     std::thread::spawn(move || {
-        // We set the parent process of each child to itself to give each it's
-        // own process group. This means ^C to shunt isn't automatically sent
-        // to all child processes. We manually forward to signal to each child.
-        //
-        // Without the isolating process groups, we'd double-SIGINT each child
-        // process on ^C, potentially causing issues.
         for signal in &mut signals {
-            for id in &ids {
-                unsafe { nix::libc::kill(*id as i32, signal) };
-            }
+            println!("received signal {}", signal);
         }
     });
 
@@ -149,11 +177,33 @@ fn go(config: Config) -> anyhow::Result<()> {
 
             if let Some(tty_master) = h.tty_master.take() {
                 let info = h.info.clone();
-                s.spawn(move || handle_stdout(h, &info, tty_master));
+                let name = info.name.clone();
+                // let tty = tty_master.try_clone().unwrap();
+                let tty = Arc::new(tty_master);
+                let tty1 = IoArc::new(Arc::clone(&tty));
+
+                s.spawn(move || match h.child.wait() {
+                    Ok(status) => {
+                        println!("{} finished: {}", name, status);
+                    }
+                    Err(e) => println!("{} failed to be waited on: {}", h.info.name, e),
+                });
+
+                s.spawn(move || handle_stdout(&info, tty1));
             } else {
+                // TODO: Need to handle wait.
                 let cmd_stdout = h.child.stdout.take().unwrap();
                 let cmd_stderr = h.child.stderr.take().unwrap();
                 let info = h.info.clone();
+                let info2 = info.clone();
+                let name = info.name.clone();
+
+                s.spawn(move || match h.child.wait() {
+                    Ok(status) => {
+                        println!("{} finished: {}", name, status);
+                    }
+                    Err(e) => println!("{} failed to be waited on: {}", h.info.name, e),
+                });
 
                 // stderr is handled separately if we're not in a pseudo tty.
                 s.spawn(move || {
@@ -161,12 +211,11 @@ fn go(config: Config) -> anyhow::Result<()> {
                     let mut stderr = StandardStream::stderr(ColorChoice::Auto);
 
                     for line in cmd_stderr.lines().flatten() {
-                        prefix_write(&mut stderr, &info, &line);
+                        prefix_write(&mut stderr, &info2, &line);
                     }
                 });
 
-                let info = h.info.clone();
-                s.spawn(move || handle_stdout(h, &info, cmd_stdout));
+                // s.spawn(move || handle_stdout(&info, cmd_stdout));
             };
         }
     });
@@ -226,9 +275,6 @@ fn start_command(name: &str, cmd_config: &CommandConfig) -> anyhow::Result<Handl
             .context(format!("command \"{}\" was empty", name))?,
     )
     .args(&cmd_config.argv[1..])
-    // Set the parent process group to the child's process itself. This allows
-    // us to better control when children receive signals.
-    .process_group(0)
     .stdout(stdout)
     .stderr(stderr)
     .stdin(Stdio::null())
@@ -310,4 +356,41 @@ fn main() -> anyhow::Result<()> {
     }?;
 
     go(config)
+}
+
+//
+// https://stackoverflow.com/a/72563442
+//
+
+/// A variant of `Arc` that delegates IO traits if available on `&T`.
+#[derive(Debug)]
+pub struct IoArc<T>(Arc<T>);
+
+impl<T> IoArc<T> {
+    /// Create a new instance of IoArc.
+    pub fn new(data: Arc<T>) -> Self {
+        Self(data)
+    }
+}
+
+impl<T> Read for IoArc<T>
+where
+    for<'a> &'a T: Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&mut &*self.0).read(buf)
+    }
+}
+
+impl<T> Write for IoArc<T>
+where
+    for<'a> &'a T: Write,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        (&mut &*self.0).write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        (&mut &*self.0).flush()
+    }
 }

@@ -1,10 +1,8 @@
 [package]
 name = "shunt"
 description = "Run multiple commands in single terminal with docker compose like logs."
-repository = "https://github.com/owengage/shunt"
 readme = "README.md"
 version = "0.3.0"
-authors = ["Owen Gage <owengage@gmail.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
