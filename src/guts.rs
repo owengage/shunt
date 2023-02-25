@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
     os::fd::{AsRawFd, FromRawFd},
@@ -134,19 +135,39 @@ fn start_command(name: &str, cmd_config: &ShuntCommand) -> anyhow::Result<Handle
         )
     };
 
-    let cmd = Command::new(
+    let env_updates: HashMap<_, _> = cmd_config
+        .env
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.clone())))
+        .collect();
+
+    let removed_env: Vec<_> = cmd_config
+        .env
+        .iter()
+        .filter_map(|(k, v)| if v.is_none() { Some(k) } else { None })
+        .collect();
+
+    let mut cmd = Command::new(
         cmd_config
             .argv
             .get(0)
             .context(format!("command \"{}\" was empty", name))?,
-    )
-    .args(&cmd_config.argv[1..])
-    .stdout(stdout)
-    .stderr(stderr)
-    .stdin(Stdio::null())
-    .current_dir(&cmd_config.workdir)
-    .spawn()
-    .context(format!("command \"{}\" failed to spawn", name))?;
+    );
+
+    cmd.args(&cmd_config.argv[1..])
+        .current_dir(&cmd_config.workdir)
+        .stdout(stdout)
+        .stderr(stderr)
+        .stdin(Stdio::null())
+        .envs(env_updates);
+
+    for k in removed_env {
+        cmd.env_remove(k);
+    }
+
+    let cmd = cmd
+        .spawn()
+        .context(format!("command \"{}\" failed to spawn", name))?;
 
     Ok(Handle {
         info: CommandInfo {

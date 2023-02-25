@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf};
 
 use serde::Deserialize;
 
@@ -12,6 +12,7 @@ pub struct ShuntCommand {
     pub argv: Vec<String>,
     pub workdir: PathBuf,
     pub tty: AutoBool,
+    pub env: HashMap<String, Option<String>>,
 }
 
 impl<'de> Deserialize<'de> for ShuntCommand {
@@ -27,6 +28,8 @@ impl<'de> Deserialize<'de> for ShuntCommand {
                 argv: Vec<String>,
                 tty: Option<AutoBool>,
                 workdir: Option<PathBuf>,
+                #[serde(default)]
+                env: HashMap<String, Option<String>>,
             },
         }
 
@@ -46,11 +49,18 @@ impl<'de> Deserialize<'de> for ShuntCommand {
                 argv,
                 tty: AutoBool::Auto,
                 workdir: cwd,
+                env: Default::default(),
             },
-            CommandConf::Full { argv, tty, workdir } => ShuntCommand {
+            CommandConf::Full {
+                argv,
+                tty,
+                workdir,
+                env,
+            } => ShuntCommand {
                 argv,
                 tty: tty.unwrap_or(AutoBool::Auto),
                 workdir: cwd.join(workdir.unwrap_or_else(|| PathBuf::from("."))),
+                env,
             },
         })
     }
